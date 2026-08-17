@@ -147,7 +147,7 @@ async function startScreenShare() {
         width: { max: 1920 },
         height: { max: 1080 }
       },
-      audio: false
+      audio: true
     });
 
     // Display local self-preview
