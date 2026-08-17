@@ -140,15 +140,28 @@ async function startScreenShare() {
   }
 
   try {
-    // Media constraints for fluid 1080p stream at 30-60fps
+    // Media constraints for fluid 1080p stream at 30-60fps with audio
     localStream = await navigator.mediaDevices.getDisplayMedia({
       video: {
         frameRate: { ideal: 30, max: 60 },
         width: { max: 1920 },
         height: { max: 1080 }
       },
-      audio: true
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true
+      },
+      systemAudio: 'include'
     });
+
+    // Detect if audio track was actually selected by user in browser dialog
+    const audioTracks = localStream.getAudioTracks();
+    if (audioTracks.length > 0) {
+      showToast('System audio captured successfully! 🔊', 'success');
+    } else {
+      showToast('Notice: No audio selected. Make sure to check "Share system audio" and choose Entire Screen or Tab.', 'info');
+    }
 
     // Display local self-preview
     localVideo.srcObject = localStream;
@@ -246,11 +259,22 @@ function stopScreenShare() {
 function handleRemoteStream(stream) {
   remoteStream = stream;
   remoteVideo.srcObject = stream;
+  remoteVideo.muted = false; // Ensure unmuted playback for remote audio
   remoteVideo.classList.remove('hidden');
   placeholderOverlay.classList.add('hidden');
   videoControlsOverlay.classList.remove('hidden');
   updateStatus('live', 'Live P2P Stream Active');
-  showToast('Receiving live video stream!', 'success');
+
+  const audioTracks = stream.getAudioTracks();
+  if (audioTracks.length > 0) {
+    showToast('Receiving live video & audio stream! 🔊', 'success');
+  } else {
+    showToast('Receiving live video (No audio track in stream)', 'info');
+  }
+
+  remoteVideo.play().catch(err => {
+    console.log('Video play error:', err);
+  });
 }
 
 // Reset Remote Video Stream
