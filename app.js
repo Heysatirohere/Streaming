@@ -39,6 +39,7 @@ const btnUnmuteOverlay = document.getElementById('btn-unmute-overlay');
 
 const chkSystemAudio = document.getElementById('chk-system-audio');
 const chkMicAudio = document.getElementById('chk-mic-audio');
+const chkAntiEcho = document.getElementById('chk-anti-echo');
 
 const btnPip = document.getElementById('btn-pip');
 const btnFullscreen = document.getElementById('btn-fullscreen');
@@ -268,13 +269,15 @@ async function startScreenShare() {
 
   try {
     let displayAudioConstraint = false;
+    const useAntiEcho = chkAntiEcho && chkAntiEcho.checked;
+
     if (chkSystemAudio && chkSystemAudio.checked) {
-      // FIX CRÍTICO: echoCancellation e noiseSuppression desativados para áudio do sistema!
-      // Se ativados, o WebRTC interpreta música/sons do sistema como ruído de fundo e mudo o som!
+      // Configuração dinâmica de cancelamento de eco (AEC)
+      // Se Anti-Eco estiver ativado, ativa echoCancellation e noiseSuppression para suprimir retorno do Discord
       displayAudioConstraint = {
-        echoCancellation: false,
-        noiseSuppression: false,
-        autoGainControl: false,
+        echoCancellation: useAntiEcho,
+        noiseSuppression: useAntiEcho,
+        autoGainControl: useAntiEcho,
         suppressLocalAudioPlayback: false
       };
     }
