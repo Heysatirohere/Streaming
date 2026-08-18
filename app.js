@@ -114,6 +114,14 @@ function registerCall(call) {
   });
 }
 
+// Update UI Status Badge
+function updateStatus(state, text) {
+  if (statusBadge && statusText) {
+    statusBadge.className = `status-badge status-${state}`;
+    statusText.textContent = text;
+  }
+}
+
 // --- 3. Initialize PeerJS with Public STUN Servers ---
 function initPeer() {
   updateStatus('connecting', 'Conectando ao Servidor Peer...');
