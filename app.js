@@ -3,7 +3,7 @@
 // State Variables
 let peer = null;
 let myPeerId = null;
-let currentCall = null;
+let activeCalls = {}; // Multi-viewer active connections dictionary
 let pendingCall = null;
 let localStream = null;
 let remoteStream = null;
@@ -23,6 +23,7 @@ const remoteVideo = document.getElementById('remote-video');
 const localVideo = document.getElementById('local-video');
 const placeholderOverlay = document.getElementById('placeholder-overlay');
 const videoControlsOverlay = document.getElementById('video-controls-overlay');
+const viewersBadge = document.getElementById('viewers-badge');
 const selfPreviewBox = document.getElementById('self-preview-box');
 const btnClosePreview = document.getElementById('btn-close-preview');
 
@@ -35,9 +36,87 @@ const btnAcceptCall = document.getElementById('btn-accept-call');
 const btnDeclineCall = document.getElementById('btn-decline-call');
 const toastContainer = document.getElementById('toast-container');
 
-// --- 1. Initialize PeerJS with Public STUN Servers ---
+// --- 1. Bitrate Booster Optimization (Force 5 Mbps & High Network Priority) ---
+function applyHighBitrate(call) {
+  const apply = () => {
+    try {
+      const pc = call.peerConnection;
+      if (!pc) return;
+      const senders = pc.getSenders();
+      const videoSender = senders.find(s => s.track && s.track.kind === 'video');
+      if (videoSender && videoSender.getParameters) {
+        const parameters = videoSender.getParameters();
+        if (!parameters.encodings || parameters.encodings.length === 0) {
+          parameters.encodings = [{}];
+        }
+        parameters.encodings[0].maxBitrate = 5000000; // 5 Mbps (5,000,000 bits/sec)
+        parameters.encodings[0].networkPriority = 'high';
+        parameters.encodings[0].priority = 'high';
+        videoSender.setParameters(parameters).then(() => {
+          console.log(`[Bitrate Booster] 5 Mbps & High Priority applied for peer: ${call.peer}`);
+        }).catch(err => console.warn('Could not set maxBitrate:', err));
+      }
+    } catch (e) {
+      console.warn('Error applying high bitrate:', e);
+    }
+  };
+
+  if (call.peerConnection) {
+    const iceState = call.peerConnection.iceConnectionState;
+    if (iceState === 'connected' || iceState === 'completed') {
+      apply();
+    } else {
+      call.peerConnection.addEventListener('iceconnectionstatechange', () => {
+        const newState = call.peerConnection.iceConnectionState;
+        if (newState === 'connected' || newState === 'completed') {
+          apply();
+        }
+      });
+    }
+  }
+}
+
+// --- 2. Active Calls Registration & Viewers Badge Counter ---
+function updateViewersBadge() {
+  const count = Object.keys(activeCalls).length;
+  if (viewersBadge) {
+    if (count > 0 && localStream) {
+      viewersBadge.textContent = `👥 ${count} Espectador${count > 1 ? 'es' : ''}`;
+      viewersBadge.classList.remove('hidden');
+    } else {
+      viewersBadge.classList.add('hidden');
+    }
+  }
+}
+
+function registerCall(call) {
+  activeCalls[call.peer] = call;
+  updateViewersBadge();
+  applyHighBitrate(call);
+
+  call.on('stream', (stream) => {
+    handleRemoteStream(stream);
+  });
+
+  call.on('close', () => {
+    delete activeCalls[call.peer];
+    updateViewersBadge();
+    if (Object.keys(activeCalls).length === 0 && !localStream) {
+      resetRemoteStream();
+    }
+    showToast(`Conexão com ${call.peer.substring(0, 6)}... encerrada.`, 'info');
+  });
+
+  call.on('error', (err) => {
+    console.error('Call Error:', err);
+    delete activeCalls[call.peer];
+    updateViewersBadge();
+  });
+}
+
+// --- 3. Initialize PeerJS with Public STUN Servers ---
 function initPeer() {
-  updateStatus('connecting', 'Connecting to Peer Server...');
+  updateStatus('connecting', 'Conectando ao Servidor Peer...');
 
   // Configuration with Google Public STUN servers for robust NAT traversal
   peer = new Peer({
@@ -54,67 +133,69 @@ function initPeer() {
     myPeerId = id;
     myPeerIdInput.value = id;
     btnStartShare.disabled = false;
-    updateStatus('ready', 'Ready to Stream');
-    showToast('Peer connection established! Your ID is ready.', 'success');
+    updateStatus('ready', 'Pronto para Transmitir');
+    showToast('Conexão P2P estabelecida! ID gerado.', 'success');
+
+    // Auto-Connect via URL query parameter: ?watch=HOST_PEER_ID
+    const urlParams = new URLSearchParams(window.location.search);
+    const watchHostId = urlParams.get('watch');
+    if (watchHostId && watchHostId !== id) {
+      remotePeerIdInput.value = watchHostId;
+      showToast(`Link de convite detectado! Conectando ao host ${watchHostId.substring(0, 8)}...`, 'info');
+      connectToHost(watchHostId);
+    }
   });
 
-  // Event: Incoming Call (Privacy Confirmation Flow)
+  // Event: Incoming Call (Multi-Viewer & Consent Flow)
   peer.on('call', (incomingCall) => {
-    pendingCall = incomingCall;
-    callerPeerIdText.textContent = incomingCall.peer;
-    privacyModal.classList.remove('hidden');
-    showToast(`Incoming screen share request from ${incomingCall.peer.substring(0, 8)}...`, 'info');
+    if (localStream) {
+      // Host mode: Automatically answer with local screen stream
+      incomingCall.answer(localStream);
+      registerCall(incomingCall);
+      showToast(`Novo espectador conectado: ${incomingCall.peer.substring(0, 6)}... 👥`, 'success');
+    } else {
+      // Viewer mode: Prompt user to confirm incoming screen stream
+      pendingCall = incomingCall;
+      callerPeerIdText.textContent = incomingCall.peer;
+      privacyModal.classList.remove('hidden');
+      showToast(`Solicitação de transmissão de ${incomingCall.peer.substring(0, 8)}...`, 'info');
+    }
   });
 
   // Event: Error handling
   peer.on('error', (err) => {
     console.error('PeerJS Error:', err);
-    let errMsg = 'PeerJS error occurred.';
+    let errMsg = 'Ocorreu um erro no PeerJS.';
     if (err.type === 'peer-unavailable') {
-      errMsg = 'Peer ID not found. Verify your friend\'s ID.';
+      errMsg = 'ID do Peer não encontrado. Verifique o ID do host.';
     } else if (err.type === 'network') {
-      errMsg = 'Network error. Please check your internet connection.';
+      errMsg = 'Erro de rede. Verifique sua conexão com a internet.';
     } else if (err.type === 'browser-incompatible') {
-      errMsg = 'WebRTC is not supported on this browser.';
+      errMsg = 'Seu navegador não suporta WebRTC.';
     }
     showToast(errMsg, 'error');
-    updateStatus('ready', 'Ready');
+    updateStatus('ready', 'Pronto');
   });
 
   // Event: Disconnected
   peer.on('disconnected', () => {
-    updateStatus('offline', 'Disconnected');
-    showToast('Disconnected from signaling server. Attempting reconnect...', 'error');
+    updateStatus('offline', 'Desconectado');
+    showToast('Desconectado do servidor de sinalização. Reconectando...', 'error');
     peer.reconnect();
   });
 }
 
-// --- 2. Privacy Modal Accept / Decline Handlers ---
+// --- 4. Privacy Modal Accept / Decline Handlers ---
 btnAcceptCall.addEventListener('click', () => {
   if (!pendingCall) return;
 
   privacyModal.classList.add('hidden');
-  currentCall = pendingCall;
+  const call = pendingCall;
   pendingCall = null;
 
-  // Answer call without sending a local stream (receiver view mode)
-  currentCall.answer(null);
-
-  // Handle incoming remote media stream
-  currentCall.on('stream', (stream) => {
-    handleRemoteStream(stream);
-  });
-
-  currentCall.on('close', () => {
-    resetRemoteStream();
-    showToast('Stream closed by remote peer.', 'info');
-  });
-
-  currentCall.on('error', (err) => {
-    console.error('Call Error:', err);
-    showToast('Stream connection error.', 'error');
-    resetRemoteStream();
-  });
+  // Answer call as viewer receiving stream
+  call.answer(null);
+  registerCall(call);
 });
 
 btnDeclineCall.addEventListener('click', () => {
@@ -123,19 +204,18 @@ btnDeclineCall.addEventListener('click', () => {
     pendingCall = null;
   }
   privacyModal.classList.add('hidden');
-  showToast('Screen share call declined.', 'info');
+  showToast('Chamada recusada.', 'info');
 });
 
-// --- 3. Start Screen Sharing (getDisplayMedia with Constraints) ---
+// --- 5. Start Screen Sharing (getDisplayMedia with Constraints) ---
 async function startScreenShare() {
   if (!myPeerId) {
-    showToast('Peer network not initialized yet.', 'error');
+    showToast('Rede P2P ainda não inicializada.', 'error');
     return;
   }
 
-  // Check if getDisplayMedia is supported
   if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
-    showToast('Screen sharing is not supported in this browser.', 'error');
+    showToast('Compartilhamento de tela não é suportado neste navegador.', 'error');
     return;
   }
 
@@ -155,12 +235,12 @@ async function startScreenShare() {
       systemAudio: 'include'
     });
 
-    // Detect if audio track was actually selected by user in browser dialog
+    // Detect if audio track was actually selected
     const audioTracks = localStream.getAudioTracks();
     if (audioTracks.length > 0) {
-      showToast('System audio captured successfully! 🔊', 'success');
+      showToast('Áudio do sistema capturado com sucesso! 🔊', 'success');
     } else {
-      showToast('Notice: No audio selected. Make sure to check "Share system audio" and choose Entire Screen or Tab.', 'info');
+      showToast('Aviso: Nenhum áudio selecionado. Marque "Compartilhar áudio" na janela do navegador.', 'info');
     }
 
     // Display local self-preview
@@ -170,88 +250,74 @@ async function startScreenShare() {
     // UI state update
     btnStartShare.classList.add('hidden');
     btnStopShare.classList.remove('hidden');
-    updateStatus('live', 'Sharing Your Screen');
+    updateStatus('live', 'Transmitindo sua Tela');
 
     // Listen to native browser "Stop sharing" event
     const videoTrack = localStream.getVideoTracks()[0];
     if (videoTrack) {
       videoTrack.onended = () => {
-        showToast('Screen share stopped.', 'info');
+        showToast('Transmissão encerrada.', 'info');
         stopScreenShare();
       };
     }
 
-    // Call connected remote peer if target ID is provided
+    // If target Peer ID is in input box, call them
     const targetPeerId = remotePeerIdInput.value.trim();
     if (targetPeerId) {
-      callRemotePeer(targetPeerId);
+      connectToHost(targetPeerId);
     } else {
-      showToast('Sharing screen locally. Enter friend\'s ID & click Connect to stream to them.', 'info');
+      showToast('Transmitindo tela! Copie seu link de convite e envie aos seus amigos.', 'info');
     }
 
   } catch (err) {
     console.error('getDisplayMedia Error:', err);
     if (err.name === 'NotAllowedError') {
-      showToast('Screen sharing permission was denied.', 'error');
+      showToast('Permissão de compartilhamento negada.', 'error');
     } else {
-      showToast(`Could not start screen share: ${err.message}`, 'error');
+      showToast(`Erro ao iniciar compartilhamento: ${err.message}`, 'error');
     }
     stopScreenShare();
   }
 }
 
-// --- 4. Call Remote Peer with Local Stream ---
-function callRemotePeer(targetId) {
-  if (!localStream) {
-    showToast('Please start screen sharing first before connecting.', 'info');
-    return;
-  }
-
+// --- 6. Connect to Host / Remote Peer ---
+function connectToHost(targetId) {
   if (targetId === myPeerId) {
-    showToast('You cannot call your own Peer ID!', 'error');
+    showToast('Você não pode conectar ao seu próprio ID!', 'error');
     return;
   }
 
-  showToast(`Calling peer ${targetId.substring(0, 8)}...`, 'info');
-  updateStatus('connecting', 'Connecting to Friend...');
+  showToast(`Conectando a ${targetId.substring(0, 8)}...`, 'info');
+  updateStatus('connecting', 'Conectando ao Host...');
 
-  currentCall = peer.call(targetId, localStream);
-
-  currentCall.on('stream', (stream) => {
-    handleRemoteStream(stream);
-  });
-
-  currentCall.on('close', () => {
-    showToast('Call ended by remote peer.', 'info');
-    resetRemoteStream();
-  });
-
-  currentCall.on('error', (err) => {
-    console.error('Call Error:', err);
-    showToast('Failed to establish stream with remote peer.', 'error');
-  });
+  const call = peer.call(targetId, localStream || null);
+  registerCall(call);
 }
 
-// --- 5. Stop Screen Share & Reset UI ---
+// --- 7. Stop Screen Share & Reset UI ---
 function stopScreenShare() {
   if (localStream) {
     localStream.getTracks().forEach((track) => track.stop());
     localStream = null;
   }
 
-  if (currentCall) {
-    currentCall.close();
-    currentCall = null;
-  }
+  // Close active viewer calls
+  Object.keys(activeCalls).forEach(peerId => {
+    if (activeCalls[peerId]) {
+      activeCalls[peerId].close();
+    }
+  });
+  activeCalls = {};
 
   localVideo.srcObject = null;
   selfPreviewBox.classList.add('hidden');
 
   btnStartShare.classList.remove('hidden');
   btnStopShare.classList.add('hidden');
+  updateViewersBadge();
 
   if (!remoteStream) {
-    updateStatus('ready', 'Ready');
+    updateStatus('ready', 'Pronto');
   }
 }
 
@@ -259,17 +325,17 @@ function stopScreenShare() {
 function handleRemoteStream(stream) {
   remoteStream = stream;
   remoteVideo.srcObject = stream;
-  remoteVideo.muted = false; // Ensure unmuted playback for remote audio
+  remoteVideo.muted = false; // Ensure unmuted audio playback
   remoteVideo.classList.remove('hidden');
   placeholderOverlay.classList.add('hidden');
   videoControlsOverlay.classList.remove('hidden');
-  updateStatus('live', 'Live P2P Stream Active');
+  updateStatus('live', 'Transmissão P2P Ao Vivo');
 
   const audioTracks = stream.getAudioTracks();
   if (audioTracks.length > 0) {
-    showToast('Receiving live video & audio stream! 🔊', 'success');
+    showToast('Recebendo vídeo e áudio ao vivo! 🔊', 'success');
   } else {
-    showToast('Receiving live video (No audio track in stream)', 'info');
+    showToast('Recebendo vídeo ao vivo (sem canal de áudio)', 'info');
   }
 
   remoteVideo.play().catch(err => {
@@ -285,25 +351,22 @@ function resetRemoteStream() {
   placeholderOverlay.classList.remove('hidden');
   videoControlsOverlay.classList.add('hidden');
   if (!localStream) {
-    updateStatus('ready', 'Ready');
+    updateStatus('ready', 'Pronto');
   }
 }
 
-// --- 6. Helper Functions & Event Listeners ---
+// --- 8. Event Listeners & UI Controls ---
 
-// Update UI Status Badge
-function updateStatus(state, text) {
-  statusBadge.className = `status-badge status-${state}`;
-  statusText.textContent = text;
-}
-
-// Copy Peer ID to Clipboard
+// Copy Invite Link to Clipboard
 btnCopyId.addEventListener('click', () => {
   if (!myPeerId) return;
-  navigator.clipboard.writeText(myPeerId).then(() => {
-    showToast('Peer ID copied to clipboard!', 'success');
+  const inviteUrl = `${window.location.origin}${window.location.pathname}?watch=${myPeerId}`;
+  
+  navigator.clipboard.writeText(inviteUrl).then(() => {
+    showToast('Link de convite copiado!', 'success');
   }).catch(() => {
-    showToast('Failed to copy ID.', 'error');
+    navigator.clipboard.writeText(myPeerId);
+    showToast('ID copiado!', 'success');
   });
 });
 
@@ -311,14 +374,10 @@ btnCopyId.addEventListener('click', () => {
 btnConnectPeer.addEventListener('click', () => {
   const targetId = remotePeerIdInput.value.trim();
   if (!targetId) {
-    showToast('Please enter a friend\'s Peer ID first.', 'error');
+    showToast('Insira o ID do amigo ou use o link de convite.', 'error');
     return;
   }
-  if (localStream) {
-    callRemotePeer(targetId);
-  } else {
-    showToast('Waiting for incoming stream, or start your screen share.', 'info');
-  }
+  connectToHost(targetId);
 });
 
 // Start & Stop Share Buttons
@@ -334,7 +393,7 @@ btnClosePreview.addEventListener('click', () => {
 btnFullscreen.addEventListener('click', () => {
   if (!document.fullscreenElement) {
     videoContainer.requestFullscreen().catch(err => {
-      showToast(`Fullscreen error: ${err.message}`, 'error');
+      showToast(`Erro ao entrar em tela cheia: ${err.message}`, 'error');
     });
   } else {
     document.exitFullscreen();
@@ -349,10 +408,10 @@ btnPip.addEventListener('click', async () => {
     } else if (remoteVideo.readyState >= 2) {
       await remoteVideo.requestPictureInPicture();
     } else {
-      showToast('No active video stream to enter PiP.', 'info');
+      showToast('Nenhum vídeo ativo para modo PiP.', 'info');
     }
   } catch (err) {
-    showToast(`PiP error: ${err.message}`, 'error');
+    showToast(`Erro no PiP: ${err.message}`, 'error');
   }
 });
 
