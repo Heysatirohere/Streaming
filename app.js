@@ -6,6 +6,7 @@ let myPeerId = null;
 let activeCalls = {}; // Multi-viewer active connections dictionary
 let pendingCall = null;
 let localStream = null;
+let micStreamTrack = null;
 let remoteStream = null;
 
 // DOM Elements
@@ -27,6 +28,18 @@ const viewersBadge = document.getElementById('viewers-badge');
 const selfPreviewBox = document.getElementById('self-preview-box');
 const btnClosePreview = document.getElementById('btn-close-preview');
 
+const audioStatusBadge = document.getElementById('audio-status-badge');
+const audioStatusText = document.getElementById('audio-status-text');
+const btnVolumeToggle = document.getElementById('btn-volume-toggle');
+const iconVolumeOn = document.getElementById('icon-volume-on');
+const iconVolumeOff = document.getElementById('icon-volume-off');
+const volumeSlider = document.getElementById('volume-slider');
+const unmuteBanner = document.getElementById('unmute-banner');
+const btnUnmuteOverlay = document.getElementById('btn-unmute-overlay');
+
+const chkSystemAudio = document.getElementById('chk-system-audio');
+const chkMicAudio = document.getElementById('chk-mic-audio');
+
 const btnPip = document.getElementById('btn-pip');
 const btnFullscreen = document.getElementById('btn-fullscreen');
 
@@ -35,6 +48,32 @@ const callerPeerIdText = document.getElementById('caller-peer-id-text');
 const btnAcceptCall = document.getElementById('btn-accept-call');
 const btnDeclineCall = document.getElementById('btn-decline-call');
 const toastContainer = document.getElementById('toast-container');
+
+// --- Helper: Mix System Audio + Microphone into a single MediaStreamTrack ---
+function createMixedAudioTrack(displayStream, micStream) {
+  try {
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const dest = audioCtx.createMediaStreamDestination();
+
+    if (displayStream && displayStream.getAudioTracks().length > 0) {
+      const displaySource = audioCtx.createMediaStreamSource(displayStream);
+      displaySource.connect(dest);
+    }
+
+    if (micStream && micStream.getAudioTracks().length > 0) {
+      const micSource = audioCtx.createMediaStreamSource(micStream);
+      micSource.connect(dest);
+    }
+
+    const mixedTracks = dest.stream.getAudioTracks();
+    if (mixedTracks.length > 0) {
+      return mixedTracks[0];
+    }
+  } catch (e) {
+    console.warn('AudioContext mixing error, falling back to direct track:', e);
+  }
+  return (displayStream && displayStream.getAudioTracks()[0]) || (micStream && micStream.getAudioTracks()[0]);
+}
 
 // --- 1. Bitrate Booster Optimization (Force 5 Mbps & High Network Priority) ---
 function applyHighBitrate(call) {
@@ -215,7 +254,7 @@ btnDeclineCall.addEventListener('click', () => {
   showToast('Chamada recusada.', 'info');
 });
 
-// --- 5. Start Screen Sharing (getDisplayMedia with Constraints) ---
+// --- 5. Start Screen Sharing (getDisplayMedia with Audio Fixes) ---
 async function startScreenShare() {
   if (!myPeerId) {
     showToast('Rede P2P ainda não inicializada.', 'error');
@@ -228,27 +267,64 @@ async function startScreenShare() {
   }
 
   try {
-    // Media constraints for fluid 1080p stream at 30-60fps with audio
+    let displayAudioConstraint = false;
+    if (chkSystemAudio && chkSystemAudio.checked) {
+      // FIX CRÍTICO: echoCancellation e noiseSuppression desativados para áudio do sistema!
+      // Se ativados, o WebRTC interpreta música/sons do sistema como ruído de fundo e mudo o som!
+      displayAudioConstraint = {
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
+        suppressLocalAudioPlayback: false
+      };
+    }
+
+    // Capturar compartilhamento de tela com constraints otimizadas
     localStream = await navigator.mediaDevices.getDisplayMedia({
       video: {
         frameRate: { ideal: 30, max: 60 },
         width: { max: 1920 },
         height: { max: 1080 }
       },
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true
-      },
+      audio: displayAudioConstraint,
       systemAudio: 'include'
     });
 
-    // Detect if audio track was actually selected
-    const audioTracks = localStream.getAudioTracks();
-    if (audioTracks.length > 0) {
+    // Captura opcional de Microfone se o usuário marcou a opção
+    let micStream = null;
+    if (chkMicAudio && chkMicAudio.checked) {
+      try {
+        micStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true
+          }
+        });
+      } catch (micErr) {
+        console.warn('Falha ao acessar microfone:', micErr);
+        showToast('Aviso: Não foi possível acessar o microfone.', 'info');
+      }
+    }
+
+    const displayAudioTracks = localStream.getAudioTracks();
+    const hasMicAudio = micStream && micStream.getAudioTracks().length > 0;
+
+    if (displayAudioTracks.length > 0 && hasMicAudio) {
+      const mixedTrack = createMixedAudioTrack(localStream, micStream);
+      if (mixedTrack) {
+        displayAudioTracks.forEach(t => localStream.removeTrack(t));
+        localStream.addTrack(mixedTrack);
+        showToast('Áudio do Sistema + Microfone capturados com sucesso! 🔊🎤', 'success');
+      }
+    } else if (hasMicAudio && displayAudioTracks.length === 0) {
+      micStreamTrack = micStream.getAudioTracks()[0];
+      localStream.addTrack(micStreamTrack);
+      showToast('Áudio do Microfone incluído na transmissão! 🎤', 'success');
+    } else if (displayAudioTracks.length > 0) {
       showToast('Áudio do sistema capturado com sucesso! 🔊', 'success');
     } else {
-      showToast('Aviso: Nenhum áudio selecionado. Marque "Compartilhar áudio" na janela do navegador.', 'info');
+      showToast('Aviso: Nenhum áudio selecionado. Marque "Compartilhar áudio" no popup do navegador.', 'info');
     }
 
     // Display local self-preview
@@ -308,6 +384,10 @@ function stopScreenShare() {
     localStream.getTracks().forEach((track) => track.stop());
     localStream = null;
   }
+  if (micStreamTrack) {
+    micStreamTrack.stop();
+    micStreamTrack = null;
+  }
 
   // Close active viewer calls
   Object.keys(activeCalls).forEach(peerId => {
@@ -333,22 +413,49 @@ function stopScreenShare() {
 function handleRemoteStream(stream) {
   remoteStream = stream;
   remoteVideo.srcObject = stream;
-  remoteVideo.muted = false; // Ensure unmuted audio playback
   remoteVideo.classList.remove('hidden');
   placeholderOverlay.classList.add('hidden');
   videoControlsOverlay.classList.remove('hidden');
   updateStatus('live', 'Transmissão P2P Ao Vivo');
 
   const audioTracks = stream.getAudioTracks();
-  if (audioTracks.length > 0) {
+  const hasAudio = audioTracks.length > 0;
+
+  if (audioStatusBadge && audioStatusText) {
+    if (hasAudio) {
+      audioStatusBadge.classList.remove('audio-disabled');
+      audioStatusText.textContent = 'Áudio Ativo';
+    } else {
+      audioStatusBadge.classList.add('audio-disabled');
+      audioStatusText.textContent = 'Sem Áudio';
+    }
+  }
+
+  if (hasAudio) {
     showToast('Recebendo vídeo e áudio ao vivo! 🔊', 'success');
   } else {
     showToast('Recebendo vídeo ao vivo (sem canal de áudio)', 'info');
   }
 
-  remoteVideo.play().catch(err => {
-    console.log('Video play error:', err);
-  });
+  // Configuração inicial de volume e unmuted
+  const targetVolume = parseFloat(volumeSlider.value) || 1.0;
+  remoteVideo.volume = targetVolume;
+  remoteVideo.muted = false;
+
+  // Tentativa de reprodução com som desmutado (Respeitando Autoplay Policy)
+  const playPromise = remoteVideo.play();
+  if (playPromise !== undefined) {
+    playPromise.then(() => {
+      unmuteBanner.classList.add('hidden');
+      updateVolumeIcon(false);
+    }).catch(err => {
+      console.warn('Autoplay com áudio bloqueado pelo navegador. Mutando para permitir vídeo:', err);
+      remoteVideo.muted = true;
+      remoteVideo.play().catch(e => console.error('Erro no play com mudo:', e));
+      unmuteBanner.classList.remove('hidden');
+      updateVolumeIcon(true);
+    });
+  }
 }
 
 // Reset Remote Video Stream
@@ -358,18 +465,89 @@ function resetRemoteStream() {
   remoteVideo.classList.add('hidden');
   placeholderOverlay.classList.remove('hidden');
   videoControlsOverlay.classList.add('hidden');
+  unmuteBanner.classList.add('hidden');
   if (!localStream) {
     updateStatus('ready', 'Pronto');
   }
 }
 
-// --- 8. Event Listeners & UI Controls ---
+// --- 8. Audio Controls & Event Listeners ---
+
+function forceUnmuteAudio() {
+  if (remoteVideo) {
+    remoteVideo.muted = false;
+    remoteVideo.volume = parseFloat(volumeSlider.value) || 1.0;
+    remoteVideo.play().then(() => {
+      unmuteBanner.classList.add('hidden');
+      updateVolumeIcon(false);
+      showToast('Som ativado com sucesso! 🔊', 'success');
+    }).catch(err => {
+      console.error('Erro ao desmutar:', err);
+    });
+  }
+}
+
+function updateVolumeIcon(isMuted) {
+  if (!iconVolumeOn || !iconVolumeOff) return;
+  if (isMuted || (remoteVideo && remoteVideo.volume === 0)) {
+    iconVolumeOn.classList.add('hidden');
+    iconVolumeOff.classList.remove('hidden');
+  } else {
+    iconVolumeOn.classList.remove('hidden');
+    iconVolumeOff.classList.add('hidden');
+  }
+}
+
+if (btnUnmuteOverlay) {
+  btnUnmuteOverlay.addEventListener('click', (e) => {
+    e.stopPropagation();
+    forceUnmuteAudio();
+  });
+}
+
+if (videoContainer) {
+  videoContainer.addEventListener('click', () => {
+    if (unmuteBanner && !unmuteBanner.classList.contains('hidden')) {
+      forceUnmuteAudio();
+    }
+  });
+}
+
+if (btnVolumeToggle) {
+  btnVolumeToggle.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (!remoteVideo) return;
+    remoteVideo.muted = !remoteVideo.muted;
+    if (!remoteVideo.muted && remoteVideo.volume === 0) {
+      remoteVideo.volume = 1.0;
+      volumeSlider.value = 1.0;
+    }
+    updateVolumeIcon(remoteVideo.muted);
+    if (!remoteVideo.muted) {
+      unmuteBanner.classList.add('hidden');
+    }
+  });
+}
+
+if (volumeSlider) {
+  volumeSlider.addEventListener('input', (e) => {
+    const val = parseFloat(e.target.value);
+    if (remoteVideo) {
+      remoteVideo.volume = val;
+      if (val > 0 && remoteVideo.muted) {
+        remoteVideo.muted = false;
+        unmuteBanner.classList.add('hidden');
+      }
+      updateVolumeIcon(remoteVideo.muted || val === 0);
+    }
+  });
+}
 
 // Copy Invite Link to Clipboard
 btnCopyId.addEventListener('click', () => {
   if (!myPeerId) return;
   const inviteUrl = `${window.location.origin}${window.location.pathname}?watch=${myPeerId}`;
-  
+
   navigator.clipboard.writeText(inviteUrl).then(() => {
     showToast('Link de convite copiado!', 'success');
   }).catch(() => {
@@ -427,7 +605,7 @@ btnPip.addEventListener('click', async () => {
 function showToast(message, type = 'info') {
   const toast = document.createElement('div');
   toast.className = `toast toast-${type}`;
-  
+
   let icon = 'ℹ️';
   if (type === 'success') icon = '✓';
   if (type === 'error') icon = '⚠️';

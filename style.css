@@ -307,9 +307,99 @@ body {
   font-weight: 600;
 }
 
+.audio-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(99, 102, 241, 0.2);
+  color: #a5b4fc;
+}
+
+.audio-badge.audio-disabled {
+  background: rgba(239, 68, 68, 0.2);
+  color: #fca5a5;
+}
+
 .action-buttons-group {
   display: flex;
+  align-items: center;
   gap: 8px;
+}
+
+.volume-control-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(17, 24, 39, 0.8);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--border-color);
+  padding: 2px 8px 2px 2px;
+  border-radius: var(--radius-sm);
+}
+
+.volume-slider {
+  width: 70px;
+  height: 4px;
+  accent-color: var(--accent-primary);
+  cursor: pointer;
+}
+
+.unmute-banner {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 15;
+  pointer-events: auto;
+}
+
+.btn-unmute-overlay {
+  background: linear-gradient(135deg, var(--accent-primary), #4338ca);
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  padding: 10px 20px;
+  border-radius: var(--radius-full);
+  font-weight: 600;
+  font-size: 0.9rem;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  box-shadow: 0 8px 25px rgba(99, 102, 241, 0.4);
+  animation: pulse-green 1.5s infinite;
+  transition: transform 0.2s ease;
+}
+
+.btn-unmute-overlay:hover {
+  transform: scale(1.04);
+}
+
+.audio-options-group {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  padding: 2px 0;
+}
+
+.checkbox-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.checkbox-label input[type="checkbox"] {
+  accent-color: var(--accent-primary);
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+}
+
+.checkbox-label:hover {
+  color: var(--text-main);
 }
 
 .icon-btn {
