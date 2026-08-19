@@ -36,19 +36,10 @@ const volumeSlider = document.getElementById('volume-slider');
 const unmuteBanner = document.getElementById('unmute-banner');
 const btnUnmuteOverlay = document.getElementById('btn-unmute-overlay');
 
-const modeNativeAudio = document.getElementById('mode-native-audio');
-const modeDedicatedAudio = document.getElementById('mode-dedicated-audio');
-const dedicatedDeviceGroup = document.getElementById('dedicated-device-group');
-const selectAudioDevice = document.getElementById('select-audio-device');
-
 const btnAudioGuide = document.getElementById('btn-audio-guide');
 const audioGuideModal = document.getElementById('audio-guide-modal');
 const btnCloseAudioGuide = document.getElementById('btn-close-audio-guide');
 const btnCloseAudioGuideFoot = document.getElementById('btn-close-audio-guide-foot');
-const tabBtnBrowser = document.getElementById('tab-btn-browser');
-const tabBtnDesktop = document.getElementById('tab-btn-desktop');
-const tabContentBrowser = document.getElementById('tab-content-browser');
-const tabContentDesktop = document.getElementById('tab-content-desktop');
 
 const btnPip = document.getElementById('btn-pip');
 const btnFullscreen = document.getElementById('btn-fullscreen');
@@ -58,39 +49,6 @@ const callerPeerIdText = document.getElementById('caller-peer-id-text');
 const btnAcceptCall = document.getElementById('btn-accept-call');
 const btnDeclineCall = document.getElementById('btn-decline-call');
 const toastContainer = document.getElementById('toast-container');
-
-// --- Helper: Load System Audio Devices into Dropdown (Sem pedir microfone) ---
-async function loadAudioDevices() {
-  if (!selectAudioDevice) return;
-  
-  try {
-    const devices = await navigator.mediaDevices.enumerateDevices();
-    const audioInputs = devices.filter(d => d.kind === 'audioinput');
-    selectAudioDevice.innerHTML = '';
-
-    if (audioInputs.length === 0) {
-      const opt = document.createElement('option');
-      opt.value = '';
-      opt.textContent = 'Nenhum dispositivo de áudio encontrado';
-      selectAudioDevice.appendChild(opt);
-      return;
-    }
-
-    audioInputs.forEach((device, index) => {
-      const opt = document.createElement('option');
-      opt.value = device.deviceId;
-      const label = device.label || `Dispositivo de Áudio ${index + 1}`;
-      const isVirtualCable = label.toLowerCase().includes('cable') || 
-                             label.toLowerCase().includes('vb-audio') || 
-                             label.toLowerCase().includes('stereo mix');
-      opt.textContent = `${isVirtualCable ? '⭐ ' : ''}${label}`;
-      selectAudioDevice.appendChild(opt);
-    });
-  } catch (err) {
-    console.error('Erro ao carregar dispositivos de áudio:', err);
-    selectAudioDevice.innerHTML = '<option value="">Erro ao carregar dispositivos</option>';
-  }
-}
 
 // --- 1. Bitrate Booster Optimization (Force 5 Mbps & High Network Priority) ---
 function applyHighBitrate(call) {
@@ -271,7 +229,7 @@ btnDeclineCall.addEventListener('click', () => {
   showToast('Chamada recusada.', 'info');
 });
 
-// --- 5. Start Screen Sharing (getDisplayMedia com Suporte a Guia & Dispositivo Dedicado) ---
+// --- 5. Start Screen Sharing (1-Clique Direto e Limpo) ---
 async function startScreenShare() {
   if (!myPeerId) {
     showToast('Rede P2P ainda não inicializada.', 'error');
@@ -284,79 +242,37 @@ async function startScreenShare() {
   }
 
   try {
-    const isDedicatedMode = modeDedicatedAudio && modeDedicatedAudio.checked;
+    // Captura direta de Tela / Guia com áudio nativo desativando cancelamento de eco
+    localStream = await navigator.mediaDevices.getDisplayMedia({
+      video: {
+        frameRate: { ideal: 30, max: 60 },
+        width: { max: 1920 },
+        height: { max: 1080 }
+      },
+      audio: {
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
+        suppressLocalAudioPlayback: false
+      },
+      systemAudio: 'include'
+    });
 
-    if (isDedicatedMode) {
-      // 1. Capturar Vídeo da Tela
-      localStream = await navigator.mediaDevices.getDisplayMedia({
-        video: {
-          frameRate: { ideal: 30, max: 60 },
-          width: { max: 1920 },
-          height: { max: 1080 }
-        },
-        audio: false
-      });
-
-      // 2. Capturar Áudio do Dispositivo Dedicado (VLC / VB-Cable)
-      let dedicatedAudioStream = null;
-      const deviceId = selectAudioDevice ? selectAudioDevice.value : '';
-
-      if (deviceId) {
-        try {
-          dedicatedAudioStream = await navigator.mediaDevices.getUserMedia({
-            audio: {
-              deviceId: { exact: deviceId },
-              echoCancellation: false,
-              noiseSuppression: false,
-              autoGainControl: false
-            }
-          });
-          const audioTrack = dedicatedAudioStream.getAudioTracks()[0];
-          if (audioTrack) {
-            localStream.addTrack(audioTrack);
-            showToast('Áudio Dedicado (VLC / VB-Cable) capturado com sucesso! 🎬', 'success');
-          }
-        } catch (devErr) {
-          console.warn('Erro ao capturar dispositivo de áudio dedicado:', devErr);
-          showToast('Aviso: Não foi possível acessar o dispositivo de áudio selecionado.', 'error');
-        }
-      } else {
-        showToast('Aviso: Nenhum dispositivo de áudio dedicado foi selecionado no menu.', 'info');
-      }
-
+    const displayAudioTracks = localStream.getAudioTracks();
+    if (displayAudioTracks.length > 0) {
+      showToast('Áudio da transmissão capturado com sucesso! 🔊', 'success');
     } else {
-      // Modo Nativo (Guia do Navegador, Janela ou Tela Inteira)
-      localStream = await navigator.mediaDevices.getDisplayMedia({
-        video: {
-          frameRate: { ideal: 30, max: 60 },
-          width: { max: 1920 },
-          height: { max: 1080 }
-        },
-        audio: {
-          echoCancellation: false,
-          noiseSuppression: false,
-          autoGainControl: false,
-          suppressLocalAudioPlayback: false
-        },
-        systemAudio: 'include'
-      });
+      showToast('Aviso: Lembre-se de marcar "Compartilhar áudio" no pop-up do navegador.', 'info');
+    }
 
-      const displayAudioTracks = localStream.getAudioTracks();
-      if (displayAudioTracks.length > 0) {
-        showToast('Áudio do sistema / guia capturado com sucesso! 🌐', 'success');
-      } else {
-        showToast('Aviso: Lembre-se de marcar "Compartilhar áudio" no pop-up do navegador.', 'info');
-      }
-
-      // Checagem do tipo de tela capturada
-      const videoTrack = localStream.getVideoTracks()[0];
-      if (videoTrack && videoTrack.getSettings) {
-        const settings = videoTrack.getSettings();
-        if (settings.displaySurface === 'monitor') {
-          showToast('⚠️ Tela Inteira capturada! Para isolar o Discord, selecione "Guia do Navegador" ou use o modo VLC.', 'info');
-        } else if (settings.displaySurface === 'browser') {
-          showToast('✓ Guia do Navegador detectada! Áudio do Discord 100% isolado.', 'success');
-        }
+    // Checagem informativa da superficie capturada
+    const videoTrack = localStream.getVideoTracks()[0];
+    if (videoTrack && videoTrack.getSettings) {
+      const settings = videoTrack.getSettings();
+      if (settings.displaySurface === 'browser') {
+        showToast('✓ Guia do Navegador detectada! Áudio do Discord 100% isolado.', 'success');
+      } else if (settings.displaySurface === 'monitor') {
+        showToast('💡 Dica: Se estiver em call no Discord, defina a saída do Discord para o Fone de Ouvido.', 'info');
       }
     }
 
@@ -370,7 +286,6 @@ async function startScreenShare() {
     updateStatus('live', 'Transmitindo sua Tela');
 
     // Listen to native browser "Stop sharing" event
-    const videoTrack = localStream.getVideoTracks()[0];
     if (videoTrack) {
       videoTrack.onended = () => {
         showToast('Transmissão encerrada.', 'info');
@@ -650,22 +565,6 @@ function showToast(message, type = 'info') {
   }, 3500);
 }
 
-// --- Audio Mode & Device Selector Logic ---
-if (modeNativeAudio && modeDedicatedAudio) {
-  modeNativeAudio.addEventListener('change', () => {
-    if (dedicatedDeviceGroup) dedicatedDeviceGroup.classList.add('hidden');
-  });
-
-  modeDedicatedAudio.addEventListener('change', () => {
-    if (dedicatedDeviceGroup) dedicatedDeviceGroup.classList.remove('hidden');
-    loadAudioDevices();
-  });
-}
-
-if (selectAudioDevice) {
-  selectAudioDevice.addEventListener('focus', loadAudioDevices);
-}
-
 // --- Audio Guide Modal Logic ---
 if (btnAudioGuide && audioGuideModal) {
   btnAudioGuide.addEventListener('click', () => {
@@ -680,24 +579,5 @@ const closeGuideModal = () => {
 if (btnCloseAudioGuide) btnCloseAudioGuide.addEventListener('click', closeGuideModal);
 if (btnCloseAudioGuideFoot) btnCloseAudioGuideFoot.addEventListener('click', closeGuideModal);
 
-if (tabBtnBrowser && tabBtnDesktop && tabContentBrowser && tabContentDesktop) {
-  tabBtnBrowser.addEventListener('click', () => {
-    tabBtnBrowser.classList.add('active');
-    tabBtnDesktop.classList.remove('active');
-    tabContentBrowser.classList.remove('hidden');
-    tabContentDesktop.classList.add('hidden');
-  });
-
-  tabBtnDesktop.addEventListener('click', () => {
-    tabBtnDesktop.classList.add('active');
-    tabBtnBrowser.classList.remove('active');
-    tabContentDesktop.classList.remove('hidden');
-    tabContentBrowser.classList.add('hidden');
-  });
-}
-
 // Launch Peer Initialization on Load
-window.addEventListener('DOMContentLoaded', () => {
-  initPeer();
-  loadAudioDevices();
-});
+window.addEventListener('DOMContentLoaded', initPeer);
