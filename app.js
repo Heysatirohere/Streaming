@@ -304,7 +304,12 @@ async function startScreenShare() {
       if (deviceId) {
         try {
           dedicatedAudioStream = await navigator.mediaDevices.getUserMedia({
-            audio: { deviceId: { exact: deviceId } }
+            audio: {
+              deviceId: { exact: deviceId },
+              echoCancellation: false,
+              noiseSuppression: false,
+              autoGainControl: false
+            }
           });
           const audioTrack = dedicatedAudioStream.getAudioTracks()[0];
           if (audioTrack) {
@@ -320,7 +325,7 @@ async function startScreenShare() {
       }
 
     } else {
-      // Modo Nativo (Guia do Navegador)
+      // Modo Nativo (Guia do Navegador, Janela ou Tela Inteira)
       localStream = await navigator.mediaDevices.getDisplayMedia({
         video: {
           frameRate: { ideal: 30, max: 60 },
@@ -328,8 +333,9 @@ async function startScreenShare() {
           height: { max: 1080 }
         },
         audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
           suppressLocalAudioPlayback: false
         },
         systemAudio: 'include'
@@ -337,7 +343,7 @@ async function startScreenShare() {
 
       const displayAudioTracks = localStream.getAudioTracks();
       if (displayAudioTracks.length > 0) {
-        showToast('Áudio da Guia do Navegador capturado com sucesso! 🌐', 'success');
+        showToast('Áudio do sistema / guia capturado com sucesso! 🌐', 'success');
       } else {
         showToast('Aviso: Lembre-se de marcar "Compartilhar áudio" no pop-up do navegador.', 'info');
       }
@@ -347,7 +353,7 @@ async function startScreenShare() {
       if (videoTrack && videoTrack.getSettings) {
         const settings = videoTrack.getSettings();
         if (settings.displaySurface === 'monitor') {
-          showToast('⚠️ Tela Inteira capturada! Para isolar o Discord, selecione "Guia do Navegador" no pop-up ou o modo VLC.', 'info');
+          showToast('⚠️ Tela Inteira capturada! Para isolar o Discord, selecione "Guia do Navegador" ou use o modo VLC.', 'info');
         } else if (settings.displaySurface === 'browser') {
           showToast('✓ Guia do Navegador detectada! Áudio do Discord 100% isolado.', 'success');
         }
