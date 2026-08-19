@@ -6,7 +6,6 @@ let myPeerId = null;
 let activeCalls = {}; // Multi-viewer active connections dictionary
 let pendingCall = null;
 let localStream = null;
-let micStreamTrack = null;
 let remoteStream = null;
 
 // DOM Elements
@@ -41,7 +40,6 @@ const modeNativeAudio = document.getElementById('mode-native-audio');
 const modeDedicatedAudio = document.getElementById('mode-dedicated-audio');
 const dedicatedDeviceGroup = document.getElementById('dedicated-device-group');
 const selectAudioDevice = document.getElementById('select-audio-device');
-const chkMicAudio = document.getElementById('chk-mic-audio');
 
 const btnAudioGuide = document.getElementById('btn-audio-guide');
 const audioGuideModal = document.getElementById('audio-guide-modal');
@@ -61,50 +59,12 @@ const btnAcceptCall = document.getElementById('btn-accept-call');
 const btnDeclineCall = document.getElementById('btn-decline-call');
 const toastContainer = document.getElementById('toast-container');
 
-// --- Helper: Mix System Audio + Microphone into a single MediaStreamTrack ---
-function createMixedAudioTrack(displayStream, micStream) {
-  try {
-    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    const dest = audioCtx.createMediaStreamDestination();
-
-    if (displayStream && displayStream.getAudioTracks().length > 0) {
-      const displaySource = audioCtx.createMediaStreamSource(displayStream);
-      displaySource.connect(dest);
-    }
-
-    if (micStream && micStream.getAudioTracks().length > 0) {
-      const micSource = audioCtx.createMediaStreamSource(micStream);
-      micSource.connect(dest);
-    }
-
-    const mixedTracks = dest.stream.getAudioTracks();
-    if (mixedTracks.length > 0) {
-      return mixedTracks[0];
-    }
-  } catch (e) {
-    console.warn('AudioContext mixing error, falling back to direct track:', e);
-  }
-  return (displayStream && displayStream.getAudioTracks()[0]) || (micStream && micStream.getAudioTracks()[0]);
-}
-
-// --- Helper: Load System Audio Devices into Dropdown ---
+// --- Helper: Load System Audio Devices into Dropdown (Sem pedir microfone) ---
 async function loadAudioDevices() {
   if (!selectAudioDevice) return;
   
   try {
-    let devices = await navigator.mediaDevices.enumerateDevices();
-    let hasLabels = devices.some(d => d.kind === 'audioinput' && d.label);
-
-    if (!hasLabels && navigator.mediaDevices.getUserMedia) {
-      try {
-        const tempStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        devices = await navigator.mediaDevices.enumerateDevices();
-        tempStream.getTracks().forEach(t => t.stop());
-      } catch (permErr) {
-        console.warn('Permissão de áudio para enumerar dispositivos:', permErr);
-      }
-    }
-
+    const devices = await navigator.mediaDevices.enumerateDevices();
     const audioInputs = devices.filter(d => d.kind === 'audioinput');
     selectAudioDevice.innerHTML = '';
 
@@ -119,10 +79,11 @@ async function loadAudioDevices() {
     audioInputs.forEach((device, index) => {
       const opt = document.createElement('option');
       opt.value = device.deviceId;
-      const isVirtualCable = device.label.toLowerCase().includes('cable') || 
-                             device.label.toLowerCase().includes('vb-audio') || 
-                             device.label.toLowerCase().includes('stereo mix');
-      opt.textContent = `${isVirtualCable ? '⭐ ' : ''}${device.label || `Dispositivo de Áudio ${index + 1}`}`;
+      const label = device.label || `Dispositivo de Áudio ${index + 1}`;
+      const isVirtualCable = label.toLowerCase().includes('cable') || 
+                             label.toLowerCase().includes('vb-audio') || 
+                             label.toLowerCase().includes('stereo mix');
+      opt.textContent = `${isVirtualCable ? '⭐ ' : ''}${label}`;
       selectAudioDevice.appendChild(opt);
     });
   } catch (err) {
@@ -345,37 +306,17 @@ async function startScreenShare() {
           dedicatedAudioStream = await navigator.mediaDevices.getUserMedia({
             audio: { deviceId: { exact: deviceId } }
           });
+          const audioTrack = dedicatedAudioStream.getAudioTracks()[0];
+          if (audioTrack) {
+            localStream.addTrack(audioTrack);
+            showToast('Áudio Dedicado (VLC / VB-Cable) capturado com sucesso! 🎬', 'success');
+          }
         } catch (devErr) {
           console.warn('Erro ao capturar dispositivo de áudio dedicado:', devErr);
           showToast('Aviso: Não foi possível acessar o dispositivo de áudio selecionado.', 'error');
         }
       } else {
         showToast('Aviso: Nenhum dispositivo de áudio dedicado foi selecionado no menu.', 'info');
-      }
-
-      // 3. Microfone Opcional
-      let micStream = null;
-      if (chkMicAudio && chkMicAudio.checked) {
-        try {
-          micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        } catch (micErr) {
-          console.warn('Falha ao acessar microfone:', micErr);
-        }
-      }
-
-      // Mixar ou Adicionar Faixas de Áudio
-      if (dedicatedAudioStream && micStream) {
-        const mixedTrack = createMixedAudioTrack(dedicatedAudioStream, micStream);
-        if (mixedTrack) localStream.addTrack(mixedTrack);
-        showToast('Áudio Dedicado (VLC) + Microfone combinados com sucesso! 🎬🎤', 'success');
-      } else if (dedicatedAudioStream) {
-        const audioTrack = dedicatedAudioStream.getAudioTracks()[0];
-        if (audioTrack) localStream.addTrack(audioTrack);
-        showToast('Áudio Dedicado (VLC / VB-Cable) capturado com sucesso! 🎬', 'success');
-      } else if (micStream) {
-        const micTrack = micStream.getAudioTracks()[0];
-        if (micTrack) localStream.addTrack(micTrack);
-        showToast('Áudio do Microfone incluído na transmissão! 🎤', 'success');
       }
 
     } else {
@@ -394,31 +335,8 @@ async function startScreenShare() {
         systemAudio: 'include'
       });
 
-      // Microfone Opcional
-      let micStream = null;
-      if (chkMicAudio && chkMicAudio.checked) {
-        try {
-          micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        } catch (micErr) {
-          console.warn('Falha ao acessar microfone:', micErr);
-        }
-      }
-
       const displayAudioTracks = localStream.getAudioTracks();
-      const hasMicAudio = micStream && micStream.getAudioTracks().length > 0;
-
-      if (displayAudioTracks.length > 0 && hasMicAudio) {
-        const mixedTrack = createMixedAudioTrack(localStream, micStream);
-        if (mixedTrack) {
-          displayAudioTracks.forEach(t => localStream.removeTrack(t));
-          localStream.addTrack(mixedTrack);
-          showToast('Áudio da Guia + Microfone capturados! 🌐🎤', 'success');
-        }
-      } else if (hasMicAudio && displayAudioTracks.length === 0) {
-        micStreamTrack = micStream.getAudioTracks()[0];
-        localStream.addTrack(micStreamTrack);
-        showToast('Áudio do Microfone incluído na transmissão! 🎤', 'success');
-      } else if (displayAudioTracks.length > 0) {
+      if (displayAudioTracks.length > 0) {
         showToast('Áudio da Guia do Navegador capturado com sucesso! 🌐', 'success');
       } else {
         showToast('Aviso: Lembre-se de marcar "Compartilhar áudio" no pop-up do navegador.', 'info');
@@ -492,10 +410,6 @@ function stopScreenShare() {
   if (localStream) {
     localStream.getTracks().forEach((track) => track.stop());
     localStream = null;
-  }
-  if (micStreamTrack) {
-    micStreamTrack.stop();
-    micStreamTrack = null;
   }
 
   // Close active viewer calls
