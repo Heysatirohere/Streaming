@@ -192,21 +192,36 @@
             <label class="card-label">Controles da Transmissão</label>
           </div>
           
-          <div class="audio-options-group">
-            <label class="checkbox-label" title="Capturar áudio do sistema/navegador">
-              <input type="checkbox" id="chk-system-audio" checked>
-              <span>Áudio do Sistema</span>
+          <div class="audio-mode-selector">
+            <label class="audio-mode-option" title="Ideal para Crunchyroll, YouTube, Netflix. O Chrome isola o áudio sem instalar nada.">
+              <input type="radio" name="audio-mode" id="mode-native-audio" value="native" checked>
+              <span>🌐 Guia do Navegador (Sem Instalar Nada)</span>
             </label>
-            <label class="checkbox-label" title="Incluir áudio do microfone na transmissão">
-              <input type="checkbox" id="chk-mic-audio">
-              <span>Microfone</span>
-            </label>
-            <label class="checkbox-label" title="Ativar cancelamento de eco para evitar retorno da sua voz no Discord">
-              <input type="checkbox" id="chk-anti-echo" checked>
-              <span>Anti-Eco (Discord)</span>
+            <label class="audio-mode-option" title="Ideal para VLC, MPC-HC, Jogos. Requer dispositivo de áudio separado (ex: VB-Cable).">
+              <input type="radio" name="audio-mode" id="mode-dedicated-audio" value="dedicated">
+              <span>🎬 VLC / App Desktop (Dispositivo Dedicado)</span>
             </label>
           </div>
-          <p class="audio-tip">💡 <strong>Dica Discord:</strong> Para evitar ouvir sua própria voz, o streamer pode ativar o <em>Anti-Eco</em> acima ou compartilhar uma <em>Guia do Navegador</em> específica.</p>
+
+          <div id="dedicated-device-group" class="dedicated-device-group hidden">
+            <label for="select-audio-device" class="device-label">Dispositivo de Áudio do Filme (ex: CABLE Output):</label>
+            <select id="select-audio-device" class="select-input">
+              <option value="">Clique para carregar dispositivos...</option>
+            </select>
+          </div>
+
+          <div class="audio-options-group">
+            <label class="checkbox-label" title="Incluir áudio do seu microfone na transmissão">
+              <input type="checkbox" id="chk-mic-audio">
+              <span>🎤 Incluir Meu Microfone</span>
+            </label>
+          </div>
+
+          <div class="audio-tip-box">
+            <button id="btn-audio-guide" class="btn-link-help" type="button">
+              ❓ Como transmitir VLC/Crunchyroll sem vazar o Discord?
+            </button>
+          </div>
 
           <div class="action-buttons flex-row">
             <button id="btn-start-share" class="btn-accent" disabled>
@@ -250,6 +265,73 @@
             <span>Accept Stream</span>
           </button>
           <button id="btn-decline-call" class="btn-outline-danger">Decline</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Audio Guide Modal -->
+    <div id="audio-guide-modal" class="modal-backdrop hidden">
+      <div class="modal-card modal-large">
+        <div class="modal-header">
+          <h3>Como Isolar o Áudio do Discord</h3>
+          <button id="btn-close-audio-guide" class="btn-close-sm">&times;</button>
+        </div>
+        
+        <div class="guide-tabs">
+          <button id="tab-btn-browser" class="guide-tab-btn active" type="button">🌐 Sites & Navegadores</button>
+          <button id="tab-btn-desktop" class="guide-tab-btn" type="button">🎬 VLC / Apps Desktop</button>
+        </div>
+
+        <div class="guide-tab-content" id="tab-content-browser">
+          <div class="guide-step">
+            <span class="guide-num">1</span>
+            <div>
+              <strong>Abra o anime/filme no navegador:</strong>
+              <p>Acesse o Crunchyroll, YouTube ou Netflix em uma aba do Chrome, Edge ou Brave.</p>
+            </div>
+          </div>
+          <div class="guide-step">
+            <span class="guide-num">2</span>
+            <div>
+              <strong>No pop-up de transmissão:</strong>
+              <p>Clique em <em>"Iniciar Transmissão"</em> e no pop-up do navegador selecione a aba <strong>"Guia do Chrome" (ou Guia do Navegador)</strong>.</p>
+            </div>
+          </div>
+          <div class="guide-step">
+            <span class="guide-num">3</span>
+            <div>
+              <strong>Resultado:</strong>
+              <p>O navegador transmite <strong>apenas o áudio daquela aba</strong>. O Discord e os barulhos do Windows ficam 100% bloqueados sem precisar instalar nada!</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="guide-tab-content hidden" id="tab-content-desktop">
+          <div class="guide-step">
+            <span class="guide-num">1</span>
+            <div>
+              <strong>Instale o VB-Audio Cable (Grátis):</strong>
+              <p>No Windows, a API do Chrome não captura som de janelas desktop isoladas. Baixe o driver gratuito <em>VB-Audio Cable</em>.</p>
+            </div>
+          </div>
+          <div class="guide-step">
+            <span class="guide-num">2</span>
+            <div>
+              <strong>Configure a Saída do VLC / Player:</strong>
+              <p>Nas configurações do VLC (Ferramentas -> Preferências -> Áudio), escolha o dispositivo de saída <strong>"CABLE Input (VB-Audio Virtual Cable)"</strong>.</p>
+            </div>
+          </div>
+          <div class="guide-step">
+            <span class="guide-num">3</span>
+            <div>
+              <strong>No CastP2P & Discord:</strong>
+              <p>Deixe o Discord no seu <strong>Fone de Ouvido</strong>. No CastP2P, marque <em>"VLC / App Desktop"</em> e escolha <strong>CABLE Output</strong> no menu de seleção.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button id="btn-close-audio-guide-foot" class="btn-emerald">Entendi!</button>
         </div>
       </div>
     </div>
